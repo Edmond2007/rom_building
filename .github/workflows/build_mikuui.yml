@@ -64,7 +64,7 @@ jobs:
           repo init \
             -u https://github.com/Miku-UI/manifesto \
             -b Vampire_v3 \
-            --depth=1
+            --depth=1 || { echo "Repo init failed"; exit 1; }
 
       # 5. Синхронизация кода
       - name: Sync code
@@ -75,7 +75,7 @@ jobs:
             --force-sync \
             --no-clone-bundle \
             --no-tags \
-            --optimized-fetch
+            --optimized-fetch || { echo "Repo sync failed"; exit 1; }
 
       # 6. Применение device tree
       - name: Apply device trees
@@ -83,25 +83,39 @@ jobs:
           git clone \
             --depth=1 \
             https://github.com/Edmond2007/android_device_xiaomi_blossom_local_manifests.git \
-            .repo/local_manifests
+            .repo/local_manifests || { echo "Cloning device trees failed"; exit 1; }
           
           repo sync \
             -c \
             -j$(($(nproc --all) / 2)) \
-            --fail-fast
+            --fail-fast || { echo "Final repo sync failed"; exit 1; }
 
-      # 7. Сборка прошивки
+      # 7. Засекаем время начала сборки
+      - name: Start timer
+        id: timer
+        run: echo "::set-output name=start_time::$(date +%s)"
+
+      # 8. Сборка прошивки
       - name: Build ROM
         run: |
           export CCACHE_COMPRESS=1
           ccache -M 50G
           ccache -s
           
-          source build/envsetup.sh
-          lunch miku_blossom-userdebug
-          mka bacon -j$(($(nproc --all) - 2))
+          source build/envsetup.sh || { echo "Env setup failed"; exit 1; }
+          lunch miku_blossom-userdebug || { echo "Lunch failed"; exit 1; }
+          mka bacon -j$(($(nproc --all) - 2)) || { echo "Build failed"; exit 1; }
 
-      # 8. Уведомление о результате
+      # 9. Вычисляем длительность сборки
+      - name: Calculate duration
+        id: duration
+        run: |
+          end_time=$(date +%s)
+          start_time=${{ steps.timer.outputs.start_time }}
+          duration=$((end_time - start_time))
+          echo "::set-output name=value::$duration"
+
+      # 10. Уведомление о результате
       - name: Telegram Build Result
         if: always()
         uses: appleboy/telegram-action@master
@@ -109,26 +123,23 @@ jobs:
           to: ${{ secrets.TELEGRAM_CHAT_ID }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: |
-            @{
-              {
-                success() && '✅ *Сборка успешна*' || 
-                failure() && '❌ *Сборка провалена*' ||
-                '⚠️ *Неизвестный статус*'
-              }
+            @if (success()) {
+              ✅ *Сборка успешна*
+            } @else if (failure()) {
+              ❌ *Сборка провалена*
+            } @else {
+              ⚠️ *Неизвестный статус*
             }
             ▫️ *Прошивка:* Miku UI Vampire_v3
             ▫️ *Устройство:* blossom
-            ▫️ *Длительность:* ${{ (steps.duration.outputs.value || 0) / 60 }} мин.
+            ▫️ *Длительность:* ${{ steps.duration.outputs.value }} сек. (${{ format('{0}{1}', floor(steps.duration.outputs.value / 60), ' мин.' }})
             ▫️ *Результат:* [${{ job.status }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-            @{
-              {
-                success() && '▫️ *Артефакты:* [Download](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})' || 
-                ''
-              }
+            @if (success()) {
+              ▫️ *Артефакты:* [Download](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
             }
           parse_mode: markdown
 
-      # 9. Загрузка артефактов
+      # 11. Загрузка артефактов
       - name: Upload artifacts
         if: success()
         uses: actions/upload-artifact@v4
@@ -137,7 +148,7 @@ jobs:
           path: out/target/product/blossom/*.zip
           retention-days: 3
 
-      # 10. Очистка
+      # 12. Очистка
       - name: Cleanup
         if: always()
         run: |
