@@ -1,9 +1,8 @@
-name: Build Miku UI (Vampire_v3) - Fixed
+
+name: Build Miku UI (Vampire_v3) - Optimized
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
 
 env:
   CCACHE_DIR: /tmp/ccache
@@ -11,6 +10,8 @@ env:
   SWAP_SIZE: 6G
   REPO_URL: "https://storage.googleapis.com/git-repo-downloads/repo"
   PATH: ${{ env.HOME }}/bin:${{ env.PATH }}
+  TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
 jobs:
   build:
@@ -32,39 +33,31 @@ jobs:
       - name: Set up environment
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y \
-            ccache \
-            git-core \
-            python3 \
-            python-is-python3 \
-            libssl-dev \
-            curl \
-            openssh-client
+          sudo apt-get install -y             ccache             git             python3             python-is-python3             libssl-dev             curl             jq             openssh-client
 
-      - name: Install repo tool (fixed)
+      - name: Install repo tool
         run: |
           mkdir -p ~/bin
           curl -s ${{ env.REPO_URL }} > ~/bin/repo
           chmod a+rx ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
-          which repo  # Проверка установки
 
-      - name: Initialize Miku UI
+      - name: Initialize Miku UI source
         run: |
           repo init -u https://github.com/Miku-UI/manifesto -b Vampire_v3
-          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
+          repo sync -c -j4 --force-sync --no-clone-bundle --no-tags
 
-      - name: Apply device trees
+      - name: Clone device trees
         run: |
           git clone https://github.com/Edmond2007/android_device_xiaomi_blossom_local_manifests.git .repo/local_manifests
-          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
+          repo sync -c -j4 --force-sync --no-clone-bundle --no-tags
 
       - name: Build ROM
         run: |
           ccache -M 50G
           source build/envsetup.sh
           lunch miku_blossom-userdebug
-          mka bacon -j$(($(nproc --all) - 1))
+          mka bacon -j4
 
       - name: Clean up SWAP
         if: always()
@@ -72,8 +65,8 @@ jobs:
           sudo swapoff /swapfile || true
           sudo rm -f /swapfile || true
 
-      - name: Upload ROM
-        uses: actions/upload-artifact@v4
-        with:
-          name: Miku-UI-Vampire_v3-blossom
-          path: out/target/product/blossom/*.zip
+      - name: Upload to Telegram
+        if: success()
+        run: |
+          ZIP_FILE=$(find out/target/product/blossom -name "*.zip" | head -n1)
+          curl -F chat_id="$TELEGRAM_CHAT_ID"                -F document=@"$ZIP_FILE"                -F caption="✅ Miku UI build completed."                https://api.telegram.org/bot$TELEGRAM_TOKEN/sendDocument
