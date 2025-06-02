@@ -1,5 +1,5 @@
 
-name: Build Miku UI (Vampire_v3) - Valid
+name: Build Miku UI (Vampire_v3) - Final Valid
 
 on:
   workflow_dispatch:
@@ -36,9 +36,9 @@ jobs:
 
       - name: Install repo tool
         run: |
-          mkdir -p ~/bin
-          curl -s ${{ env.REPO_URL }} > ~/bin/repo
-          chmod a+rx ~/bin/repo
+          mkdir -p $HOME/bin
+          curl -s $REPO_URL > $HOME/bin/repo
+          chmod a+rx $HOME/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
       - name: Initialize Miku UI source
