@@ -8,90 +8,98 @@ on:
 env:
   CCACHE_DIR: /tmp/ccache
   USE_CCACHE: 1
-  SWAP_SIZE: 10G
-  REPO_URL: "https://storage.googleapis.com/git-repo-downloads/repo"
+  SWAP_SIZE: 8G
+  REPO_MIRRORS: |
+    https://mirrors.tuna.tsinghua.edu.cn/git-repo
+    https://gerrit-googlesource.proxy.ustclug.org/git-repo
+    https://git-repo-archive.proxy.ustclug.org
   BUILD_TIME: $(date +'%Y-%m-%d %H:%M:%S')
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 400
 
     steps:
       # 1. Настройка окружения
       - name: Setup environment
         run: |
+          # Настройка SWAP
           sudo fallocate -l $SWAP_SIZE /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
           
+          # Установка зависимостей
           sudo apt-get update -y
           sudo apt-get install -y \
-            ccache git-core python3 \
-            python-is-python3 libssl-dev \
-            curl openssh-client bc bison flex
+            ccache git-core python3 python-is-python3 \
+            libssl-dev libncurses5-dev curl openssh-client \
+            bc bison flex zip unzip
 
-      # 2. Установка repo
-      - name: Install repo tool
+      # 2. Установка repo через альтернативные зеркала
+      - name: Install repo tool (mirror)
         run: |
           mkdir -p ~/bin
-          curl -s $REPO_URL > ~/bin/repo
-          chmod +x ~/bin/repo
-          echo "$HOME/bin" >> $GITHUB_PATH
-          ~/bin/repo version
+          for mirror in $REPO_MIRRORS; do
+            echo "Пробуем зеркало: $mirror"
+            if curl -sLf "$mirror" > ~/bin/repo; then
+              chmod +x ~/bin/repo
+              echo "$HOME/bin" >> $GITHUB_PATH
+              echo "Успешно загружено с: $mirror"
+              ~/bin/repo --version
+              break
+            fi
+          done
+          [ -f ~/bin/repo ] || { echo "Все зеркала недоступны"; exit 1; }
 
       # 3. Инициализация репозитория
       - name: Initialize repo
         run: |
           git config --global user.name "Edmond2007"
           git config --global user.email "edmondseropyan6@gmail.com"
-          ~/bin/repo init -u https://github.com/Miku-UI/manifest -b Vampire_v3
+          
+          # Альтернативные URL для манифеста
+          ~/bin/repo init \
+            -u https://github.com/Miku-UI/manifesto \
+            -b Vampire_v3 \
+            --repo-url=https://gerrit-googlesource.proxy.ustclug.org/git-repo \
+            --depth=1
 
       # 4. Синхронизация кода
       - name: Sync code
         run: |
-          ~/bin/repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle
+          ~/bin/repo sync \
+            -c \
+            -j$(($(nproc --all) / 2)) \  # Уменьшаем нагрузку
+            --force-sync \
+            --no-clone-bundle \
+            --no-tags \
+            --optimized-fetch
 
-      # 5. Сборка прошивки
+      # 5. Применение device tree
+      - name: Apply device trees
+        run: |
+          git clone \
+            --depth=1 \
+            https://github.com/Edmond2007/android_device_xiaomi_blossom_local_manifests.git \
+            .repo/local_manifests
+          
+          ~/bin/repo sync \
+            -c \
+            -j$(($(nproc --all) / 2)) \
+            --fail-fast
+
+      # 6. Сборка прошивки
       - name: Build ROM
         run: |
           export CCACHE_COMPRESS=1
-          ccache -M 50G
+          ccache -M 100G
           source build/envsetup.sh
           lunch miku_blossom-userdebug
-          mka bacon -j$(($(nproc --all) - 1))
+          mka bacon -j$(($(nproc --all) - 2))
 
-      # 6. Уведомление в Telegram (успех)
-      - name: Notify Telegram (Success)
-        if: success()
-        uses: appleboy/telegram-action@master
-        with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.TELEGRAM_TOKEN }}
-          message: |
-            ✅ *Сборка завершена успешно!*
-            ▫️ *Прошивка:* Miku UI Vampire_v3
-            ▫️ *Устройство:* Redmi 9C NFC (blossom)
-            ▫️ *Время сборки:* ${{ env.BUILD_TIME }}
-            ▫️ *Длительность:* ${{ github.job.status }} минут
-            ▫️ *Артефакты:* [Download](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
-      # 7. Уведомление в Telegram (ошибка)
-      - name: Notify Telegram (Failure)
-        if: failure()
-        uses: appleboy/telegram-action@master
-        with:
-          to: ${{ secrets.TELEGRAM_CHAT_ID }}
-          token: ${{ secrets.TELEGRAM_TOKEN }}
-          message: |
-            ❌ *Сборка завершена с ошибкой!*
-            ▫️ *Прошивка:* Miku UI Vampire_v3
-            ▫️ *Устройство:* Redmi 9C NFC (blossom)
-            ▫️ *Время сборки:* ${{ env.BUILD_TIME }}
-            ▫️ *Логи:* [View](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-
-      # 8. Загрузка артефактов
+      # 7. Уведомления и артефакты
       - name: Upload artifacts
         if: success()
         uses: actions/upload-artifact@v4
@@ -99,7 +107,6 @@ jobs:
           name: Miku-UI-Vampire_v3
           path: out/target/product/blossom/*.zip
 
-      # 9. Очистка
       - name: Cleanup
         if: always()
         run: |
