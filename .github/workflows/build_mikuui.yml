@@ -76,7 +76,7 @@ jobs:
           mka bacon -j$(($(nproc --all) - 1))  # Оставляем 1 ядро свободным
 
       - name: Upload ROM
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Miku-UI-Vampire_v3-blossom-$(date +%Y%m%d)
           path: |
