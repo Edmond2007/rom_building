@@ -1,4 +1,4 @@
-name: Build Miku UI (Vampire_v3) - With SWAP
+name: Build Miku UI (Vampire_v3) - Fixed
 
 on:
   workflow_dispatch:
@@ -8,7 +8,9 @@ on:
 env:
   CCACHE_DIR: /tmp/ccache
   USE_CCACHE: 1
-  SWAP_SIZE: 8G  # Размер swap-файла (рекомендую 4-8GB для AOSP)
+  SWAP_SIZE: 6G
+  REPO_URL: "https://storage.googleapis.com/git-repo-downloads/repo"
+  PATH: ${{ env.HOME }}/bin:${{ env.PATH }}
 
 jobs:
   build:
@@ -22,7 +24,6 @@ jobs:
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
-          sudo swapon --show  # Проверка
           free -h
 
       - name: Checkout code
@@ -31,34 +32,45 @@ jobs:
       - name: Set up environment
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y ccache git-core python3 python-is-python3 libssl-dev
+          sudo apt-get install -y \
+            ccache \
+            git-core \
+            python3 \
+            python-is-python3 \
+            libssl-dev \
+            curl \
+            openssh-client
+
+      - name: Install repo tool (fixed)
+        run: |
+          mkdir -p ~/bin
+          curl -s ${{ env.REPO_URL }} > ~/bin/repo
+          chmod a+rx ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
+          which repo  # Проверка установки
 
       - name: Initialize Miku UI
         run: |
-          mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod a+x ~/bin/repo
-          echo "$HOME/bin" >> $GITHUB_PATH
           repo init -u https://github.com/Miku-UI/manifesto -b Vampire_v3
-          repo sync -c -j$(nproc --all)
+          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
 
       - name: Apply device trees
         run: |
           git clone https://github.com/Edmond2007/android_device_xiaomi_blossom_local_manifests.git .repo/local_manifests
-          repo sync -c -j$(nproc --all)
+          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
 
       - name: Build ROM
         run: |
-          ccache -M 100G
+          ccache -M 50G
           source build/envsetup.sh
           lunch miku_blossom-userdebug
           mka bacon -j$(($(nproc --all) - 1))
 
       - name: Clean up SWAP
-        if: always()  # Выполняется даже при ошибке
+        if: always()
         run: |
-          sudo swapoff /swapfile
-          sudo rm -f /swapfile
+          sudo swapoff /swapfile || true
+          sudo rm -f /swapfile || true
 
       - name: Upload ROM
         uses: actions/upload-artifact@v4
