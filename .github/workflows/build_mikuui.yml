@@ -1,16 +1,16 @@
-
-name: Build Miku UI (Vampire_v3) - Final Valid
+name: Build Miku UI (Vampire_v3)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main ]
 
 env:
   CCACHE_DIR: /tmp/ccache
   USE_CCACHE: 1
-  SWAP_SIZE: 9G
+  SWAP_SIZE: 10G
   REPO_URL: "https://storage.googleapis.com/git-repo-downloads/repo"
-  TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+  BUILD_TIME: $(date +'%Y-%m-%d %H:%M:%S')
 
 jobs:
   build:
@@ -18,54 +18,90 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Set up SWAP
+      # 1. Настройка окружения
+      - name: Setup environment
         run: |
-          sudo fallocate -l ${{ env.SWAP_SIZE }} /swapfile
+          sudo fallocate -l $SWAP_SIZE /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
-          free -h
-
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up environment
-        run: |
+          
           sudo apt-get update -y
-          sudo apt-get install -y             ccache             git             python3             python-is-python3             libssl-dev             curl             jq             openssh-client
+          sudo apt-get install -y \
+            ccache git-core python3 \
+            python-is-python3 libssl-dev \
+            curl openssh-client bc bison flex
 
+      # 2. Установка repo
       - name: Install repo tool
         run: |
-          mkdir -p $HOME/bin
-          curl -s $REPO_URL > $HOME/bin/repo
-          chmod a+rx $HOME/bin/repo
+          mkdir -p ~/bin
+          curl -s $REPO_URL > ~/bin/repo
+          chmod +x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
+          ~/bin/repo version
 
-      - name: Initialize Miku UI source
+      # 3. Инициализация репозитория
+      - name: Initialize repo
         run: |
-          repo init -u https://github.com/Miku-UI/manifesto -b Vampire_v3
-          repo sync -c -j4 --force-sync --no-clone-bundle --no-tags
+          git config --global user.name "Edmond2007"
+          git config --global user.email "edmondseropyan6@gmail.com"
+          ~/bin/repo init -u https://github.com/Miku-UI/manifest -b Vampire_v3
 
-      - name: Clone device trees
+      # 4. Синхронизация кода
+      - name: Sync code
         run: |
-          git clone https://github.com/Edmond2007/android_device_xiaomi_blossom_local_manifests.git .repo/local_manifests
-          repo sync -c -j4 --force-sync --no-clone-bundle --no-tags
+          ~/bin/repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle
 
+      # 5. Сборка прошивки
       - name: Build ROM
         run: |
+          export CCACHE_COMPRESS=1
           ccache -M 50G
           source build/envsetup.sh
           lunch miku_blossom-userdebug
-          mka bacon -j4
+          mka bacon -j$(($(nproc --all) - 1))
 
-      - name: Clean up SWAP
+      # 6. Уведомление в Telegram (успех)
+      - name: Notify Telegram (Success)
+        if: success()
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          message: |
+            ✅ *Сборка завершена успешно!*
+            ▫️ *Прошивка:* Miku UI Vampire_v3
+            ▫️ *Устройство:* Redmi 9C NFC (blossom)
+            ▫️ *Время сборки:* ${{ env.BUILD_TIME }}
+            ▫️ *Длительность:* ${{ github.job.status }} минут
+            ▫️ *Артефакты:* [Download](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      # 7. Уведомление в Telegram (ошибка)
+      - name: Notify Telegram (Failure)
+        if: failure()
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          message: |
+            ❌ *Сборка завершена с ошибкой!*
+            ▫️ *Прошивка:* Miku UI Vampire_v3
+            ▫️ *Устройство:* Redmi 9C NFC (blossom)
+            ▫️ *Время сборки:* ${{ env.BUILD_TIME }}
+            ▫️ *Логи:* [View](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+      # 8. Загрузка артефактов
+      - name: Upload artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Miku-UI-Vampire_v3
+          path: out/target/product/blossom/*.zip
+
+      # 9. Очистка
+      - name: Cleanup
         if: always()
         run: |
           sudo swapoff /swapfile || true
           sudo rm -f /swapfile || true
-
-      - name: Upload to Telegram
-        if: success()
-        run: |
-          ZIP_FILE=$(find out/target/product/blossom -name "*.zip" | head -n1)
-          curl -F chat_id="$TELEGRAM_CHAT_ID"                -F document=@"$ZIP_FILE"                -F caption="✅ Miku UI build completed."                https://api.telegram.org/bot$TELEGRAM_TOKEN/sendDocument
