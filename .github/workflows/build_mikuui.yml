@@ -113,6 +113,7 @@ jobs:
           DURATION=$((END_TIME - ${{ env.START_TIME }}))
           echo "DURATION_MIN=$((DURATION / 60))" >> $GITHUB_ENV
           echo "DURATION_SEC=$((DURATION % 60))" >> $GITHUB_ENV
+          echo "BUILD_STATUS=${{ job.status }}" >> $GITHUB_ENV
 
       # 10. Уведомление о результате
       - name: Telegram Build Result
@@ -122,13 +123,13 @@ jobs:
           to: ${{ secrets.TELEGRAM_CHAT_ID }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: |
-            ${{ github.event_name == 'workflow_dispatch' && '🚀 *Ручная сборка*' || '🚀 *Автоматическая сборка*' }}
-            ${{ success() && '✅ *Сборка успешна*' || failure() && '❌ *Сборка провалена*' || '⚠️ *Неизвестный статус*' }}
+            ${{ github.event_name == 'workflow_dispatch' && '🚀 Ручная сборка' || '🚀 Автоматическая сборка' }}
+            ${{ env.BUILD_STATUS == 'success' && '✅ Сборка успешна' || '❌ Сборка провалена' }}
             ▫️ *Прошивка:* Miku UI Vampire_v3
             ▫️ *Устройство:* blossom
             ▫️ *Длительность:* ${{ env.DURATION_MIN }} мин. ${{ env.DURATION_SEC }} сек.
             ▫️ *Результат:* [${{ job.status }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-            ${{ success() && '▫️ *Артефакты:* [Download](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})' || '' }}
+            ${{ env.BUILD_STATUS == 'success' && '▫️ *Артефакты:* [Download](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})' || '' }}
           parse_mode: markdown
 
       # 11. Загрузка артефактов
