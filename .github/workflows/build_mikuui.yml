@@ -8,7 +8,7 @@ env:
   CCACHE_DIR: /tmp/ccache
   USE_CCACHE: 1
   SWAP_SIZE: 9G
-  REPO_URL: "https://raw.githubusercontent.com/akhilnarang/scripts/master/setup/repo.sh"
+  REPO_URL: "https://storage.googleapis.com/git-repo-downloads/repo"
   TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
   TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
