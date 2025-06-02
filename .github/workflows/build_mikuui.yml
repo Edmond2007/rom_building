@@ -1,4 +1,4 @@
-name: Build Miku UI (Vampire_v3)
+name: Build Miku UI (Vampire_v3) - With SWAP
 
 on:
   workflow_dispatch:
@@ -8,78 +8,60 @@ on:
 env:
   CCACHE_DIR: /tmp/ccache
   USE_CCACHE: 1
-  CCACHE_COMPRESS: 1
+  SWAP_SIZE: 8G  # Размер swap-файла (рекомендую 4-8GB для AOSP)
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours max
+    timeout-minutes: 360
 
     steps:
+      - name: Set up SWAP
+        run: |
+          sudo fallocate -l ${{ env.SWAP_SIZE }} /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          sudo swapon --show  # Проверка
+          free -h
+
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          fetch-depth: 0  # Полная история для repo
 
       - name: Set up environment
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y \
-            ccache \
-            git-core \
-            python3 \
-            python3-pip \
-            libssl-dev \
-            libncurses5-dev \
-            bc \
-            bison \
-            flex \
-            zip \
-            unzip \
-            rsync \
-            curl \
-            zlib1g-dev \
-            gcc-multilib \
-            g++-multilib
+          sudo apt-get install -y ccache git-core python3 python-is-python3 libssl-dev
 
-      - name: Set up repo tool
+      - name: Initialize Miku UI
         run: |
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
-
-      - name: Initialize Miku UI (Vampire_v3)
-        run: |
-          repo init -u https://github.com/Miku-UI/manifesto -b Vampire_v3 --git-lfs --depth=1
-          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune
+          repo init -u https://github.com/Miku-UI/manifesto -b Vampire_v3
+          repo sync -c -j$(nproc --all)
 
       - name: Apply device trees
         run: |
-          git clone https://github.com/Edmond2007/android_device_xiaomi_blossom_local_manifests.git -b main .repo/local_manifests
-          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune
-
-      - name: Set up ccache
-        uses: actions/cache@v3
-        with:
-          path: /tmp/ccache
-          key: ${{ runner.os }}-ccache-${{ hashFiles('.repo/manifest.xml') }}
-          restore-keys: |
-            ${{ runner.os }}-ccache-
+          git clone https://github.com/Edmond2007/android_device_xiaomi_blossom_local_manifests.git .repo/local_manifests
+          repo sync -c -j$(nproc --all)
 
       - name: Build ROM
         run: |
-          ccache -M 50G
+          ccache -M 100G
           source build/envsetup.sh
           lunch miku_blossom-userdebug
-          mka bacon -j$(($(nproc --all) - 1))  # Оставляем 1 ядро свободным
+          mka bacon -j$(($(nproc --all) - 1))
+
+      - name: Clean up SWAP
+        if: always()  # Выполняется даже при ошибке
+        run: |
+          sudo swapoff /swapfile
+          sudo rm -f /swapfile
 
       - name: Upload ROM
         uses: actions/upload-artifact@v4
         with:
-          name: Miku-UI-Vampire_v3-blossom-$(date +%Y%m%d)
-          path: |
-            out/target/product/blossom/*.zip
-            out/target/product/blossom/*.md5sum
-          retention-days: 31
+          name: Miku-UI-Vampire_v3-blossom
+          path: out/target/product/blossom/*.zip
