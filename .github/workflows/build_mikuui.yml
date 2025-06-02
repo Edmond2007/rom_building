@@ -1,5 +1,5 @@
 
-name: Build Miku UI (Vampire_v3) - Optimized
+name: Build Miku UI (Vampire_v3) - Valid
 
 on:
   workflow_dispatch:
@@ -9,7 +9,6 @@ env:
   USE_CCACHE: 1
   SWAP_SIZE: 6G
   REPO_URL: "https://storage.googleapis.com/git-repo-downloads/repo"
-  PATH: ${{ env.HOME }}/bin:${{ env.PATH }}
   TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
   TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
