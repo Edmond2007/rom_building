@@ -1,0 +1,62 @@
+name: Build Miku UI for blossom
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download .repo
+        uses: actions/download-artifact@v4
+        with:
+          name: repo
+
+      - name: Extract .repo
+        run: tar -xf repo.tar.xz
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential curl flex \
+            gcc git libncurses5-dev libssl-dev libtool make python-is-python3 \
+            unzip zip openjdk-8-jdk
+
+      - name: Source build environment
+        run: |
+          source build/envsetup.sh
+          lunch miku_blossom-userdebug
+
+      - name: Build Miku UI
+        run: make -j$(nproc)
+
+      - name: Upload ROM
+        uses: actions/upload-artifact@v4
+        with:
+          name: MikuUI-ROM
+          path: out/target/product/blossom/*.zip
+
+      - name: Send to Telegram
+        if: success()
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          ZIP=$(ls out/target/product/blossom/*.zip | head -n 1)
+          curl -F document=@"$ZIP" \
+               -F chat_id=$TELEGRAM_CHAT_ID \
+               -F caption="✅ Сборка Miku UI завершена" \
+               "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendDocument"
+
+      - name: Notify failure
+        if: failure()
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_TOKEN/sendMessage" \
+               -d chat_id="$TELEGRAM_CHAT_ID" \
+               -d text="❌ Сборка Miku UI не удалась."
