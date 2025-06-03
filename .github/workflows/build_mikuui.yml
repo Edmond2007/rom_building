@@ -8,14 +8,13 @@ on:
 env:
   CCACHE_DIR: /tmp/ccache
   USE_CCACHE: 1
-  SWAP_SIZE: 16G
+  SWAP_SIZE: 8G
   REPO_DEPTH: 1
-  BUILD_TIMEOUT: 380  # минуты
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ env.BUILD_TIMEOUT }}
+    timeout-minutes: 380  # Прямое значение вместо переменной
 
     steps:
       # 1. Очистка диска и настройка окружения
@@ -62,9 +61,8 @@ jobs:
             ▫️ *Ссылка:* [GitHub](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
           parse_mode: markdown
 
-      # 4. Инициализация репозитория с проверкой ошибок
+      # 4. Инициализация репозитория
       - name: Initialize repo
-        id: init_repo
         run: |
           git config --global user.name "Edmond2007"
           git config --global user.email "edmondseropyan6@gmail.com"
@@ -72,93 +70,46 @@ jobs:
           repo init \
             -u https://github.com/Miku-UI/manifesto \
             -b Vampire_v3 \
-            --depth=${{ env.REPO_DEPTH }} \
+            --depth=$REPO_DEPTH \
             --partial-clone \
-            --clone-filter=blob:limit=5M
-          
-          if [ $? -ne 0 ]; then
-            echo "::error::Repo init failed"
-            exit 1
-          fi
+            --clone-filter=blob:limit=5M || exit 1
 
-      # 5. Синхронизация кода с контролем места
+      # 5. Синхронизация кода
       - name: Sync code
-        id: sync_code
         run: |
-          # Проверка свободного места перед синхронизацией
-          FREE_SPACE=$(df -h / | awk 'NR==2 {print $4}')
-          echo "Free space before sync: $FREE_SPACE"
-          
           repo sync \
             -c \
-            -j$(nproc - 2) \  # Уменьшенное количество потоков
+            -j2 \
             --force-sync \
             --no-clone-bundle \
             --no-tags \
             --optimized-fetch \
-            --current-branch
+            --current-branch || exit 1
           
-          SYNC_STATUS=$?
-          
-          # Очистка после синхронизации
           repo forall -c 'git gc --aggressive'
-          
-          if [ $SYNC_STATUS -ne 0 ]; then
-            echo "::error::Repo sync failed"
-            exit 1
-          fi
-
           df -h
 
       # 6. Применение device tree
       - name: Apply device trees
-        id: apply_trees
         run: |
           git clone \
             --depth=1 \
             --filter=blob:limit=5M \
             https://github.com/Edmond2007/android_device_xiaomi_blossom_local_manifests.git \
-            .repo/local_manifests
+            .repo/local_manifests || exit 1
           
-          if [ $? -ne 0 ]; then
-            echo "::error::Failed to clone device trees"
-            exit 1
-          fi
-          
-          repo sync -c -j2 --fail-fast
-          if [ $? -ne 0 ]; then
-            echo "::error::Final sync failed"
-            exit 1
-          fi
+          repo sync -c -j2 --fail-fast || exit 1
 
-      # 7. Сборка с контролем памяти
+      # 7. Сборка
       - name: Build ROM
-        id: build_rom
         run: |
-          # Лимиты для сборки
           export CCACHE_COMPRESS=1
-          ccache -M 30G  # Уменьшенный кеш
+          ccache -M 30G
           ccache -s
           
           source build/envsetup.sh || exit 1
           lunch miku_blossom-userdebug || exit 1
-          
-          # Сборка с мониторингом места
-          while true; do
-            free -h
-            df -h /
-            mka bacon -j$(($(nproc --all) - 2)) && break
-            
-            # Если сборка упала из-за нехватки места
-            if [ $(df / --output=pcent | tail -1 | tr -dc '0-9') -gt 90 ]; then
-              echo "::warning::Low disk space, cleaning..."
-              repo forall -c 'git gc --aggressive'
-              ccache -c
-              rm -rf out/target/product/*/obj/EXECUTABLES
-            else
-              exit 1
-            fi
-          done
+          mka bacon -j$(($(nproc --all) - 2)) || exit 1
 
       # 8. Уведомление об успехе
       - name: Telegram notification (success)
@@ -171,7 +122,6 @@ jobs:
             ✅ *Сборка успешна!*
             ▫️ *Версия:* Vampire_v3
             ▫️ *Устройство:* blossom
-            ▫️ *Время сборки:* ${{ steps.duration.outputs.time }}
             ▫️ *Артефакты:* [Download](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
           parse_mode: markdown
 
@@ -193,38 +143,10 @@ jobs:
           token: ${{ secrets.TELEGRAM_TOKEN }}
           message: |
             ❌ *Сборка провалена!*
-            ▫️ *Этап:* ${{ steps.check_failure.outputs.failed_step }}
             ▫️ *Лог:* [View](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-            ▫️ *Время выполнения:* ${{ steps.duration.outputs.time }}
           parse_mode: markdown
 
-      # 11. Определение причины падения
-      - name: Check failure reason
-        if: failure()
-        id: check_failure
-        run: |
-          if [[ "${{ steps.init_repo.outcome }}" == 'failure' ]]; then
-            echo "failed_step=Инициализация репозитория" >> $GITHUB_OUTPUT
-          elif [[ "${{ steps.sync_code.outcome }}" == 'failure' ]]; then
-            echo "failed_step=Синхронизация кода" >> $GITHUB_OUTPUT
-          elif [[ "${{ steps.apply_trees.outcome }}" == 'failure' ]]; then
-            echo "failed_step=Применение device tree" >> $GITHUB_OUTPUT
-          else
-            echo "failed_step=Сборка прошивки" >> $GITHUB_OUTPUT
-          fi
-
-      # 12. Расчет времени
-      - name: Calculate duration
-        id: duration
-        run: |
-          START=${{ job.steps[*].startTime }}
-          END=$(date -u +%s)
-          DURATION=$((END - START))
-          HOURS=$((DURATION / 3600))
-          MINUTES=$(( (DURATION % 3600) / 60 ))
-          echo "time=${HOURS}ч ${MINUTES}м" >> $GITHUB_OUTPUT
-
-      # 13. Очистка
+      # 11. Очистка
       - name: Cleanup
         if: always()
         run: |
